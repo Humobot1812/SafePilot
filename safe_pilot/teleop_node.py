@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Semi-Autonomous Drone Joystick Teleop Node
-==========================================
+SafePilot — Semi-Autonomous Drone Teleop Node
+=============================================
+Making drone piloting safe and accessible for everyone.
 Bridges a PS2/Xbox joystick (via /joy) to a MAVSDK-connected drone.
 
 Controller Layout
@@ -161,13 +162,13 @@ class DroneController:
     # ── asyncio entry point ────────────────────────────────────────────────────
     async def run(self):
         """Connect to drone, stream telemetry, run offboard loop forever."""
-        print("[DroneController] Connecting to drone …")
+        print("[SafePilot] Connecting to drone …")
         await self.drone.connect(system_address=DRONE_ADDRESS)
 
         async for state in self.drone.core.connection_state():
             if state.is_connected:
                 self.connected = True
-                print("[DroneController] ✅ Connected to drone!")
+                print("[SafePilot] ✅ Connected to drone!")
                 break
 
         # Stream telemetry in background tasks
@@ -181,7 +182,7 @@ class DroneController:
         # the actual mode switch is gated by self.offboard_on)
         asyncio.ensure_future(self._offboard_loop())
 
-        print("[DroneController] Background tasks started. Waiting for commands …")
+        print("[SafePilot] Background tasks started. Waiting for commands …")
 
         # Keep the coroutine alive
         while True:
@@ -207,7 +208,7 @@ class DroneController:
         try:
             async for result in self.drone.geofence.geofence_result():
                 if hasattr(result, 'is_breached') and result.is_breached:
-                    print("[DroneController] 🚨 GEOFENCE BREACH DETECTED! Disabling offboard stream for RTL.")
+                    print("[SafePilot] 🚨 GEOFENCE BREACH DETECTED! Disabling offboard stream for RTL.")
                     self.offboard_on = False
         except Exception:
             pass
@@ -231,7 +232,7 @@ class DroneController:
                 if (self.mission_active
                         and progress.total > 0
                         and progress.current >= progress.total):
-                    print("[DroneController] ✅ Mission complete! Triggering RTL …")
+                    print("[SafePilot] ✅ Mission complete! Triggering RTL …")
                     self.mission_active = False
                     self.mission_paused = False
                     asyncio.ensure_future(self.cmd_rtl())
@@ -253,56 +254,56 @@ class DroneController:
                         VelocityBodyYawspeed(vx, vy, vz, yaw)
                     )
                 except OffboardError as e:
-                    print(f"[DroneController] Offboard set error: {e}")
+                    print(f"[SafePilot] Offboard set error: {e}")
             await asyncio.sleep(dt)
 
     # ── action coroutines (called from ROS2 thread via run_coroutine_threadsafe) ─
     async def cmd_arm_takeoff(self, altitude: float = TAKEOFF_ALT):
         if not self.connected:
-            print("[DroneController] ⚠ Not connected — cannot arm/takeoff.")
+            print("[SafePilot] ⚠ Not connected — cannot arm/takeoff.")
             return
         try:
-            print("[DroneController] Arming …")
+            print("[SafePilot] Arming …")
             await self.drone.action.arm()
 
-            print(f"[DroneController] Taking off to {altitude} m …")
+            print(f"[SafePilot] Taking off to {altitude} m …")
             await self.drone.action.set_takeoff_altitude(altitude)
             await self.drone.action.takeoff()
 
             # Wait until we reach 95 % of target altitude
             async for pos in self.drone.telemetry.position():
-                print(f"[DroneController] Altitude: {pos.relative_altitude_m:.1f} m")
+                print(f"[SafePilot] Altitude: {pos.relative_altitude_m:.1f} m")
                 if pos.relative_altitude_m >= altitude * 0.95:
-                    print("[DroneController] ✅ Reached target altitude.")
+                    print("[SafePilot] ✅ Reached target altitude.")
                     break
 
             # Immediately enter offboard so the joystick has control
             await self._start_offboard()
 
         except ActionError as e:
-            print(f"[DroneController] Arm/Takeoff error: {e}")
+            print(f"[SafePilot] Arm/Takeoff error: {e}")
 
     async def cmd_land(self):
         try:
-            print("[DroneController] Landing …")
+            print("[SafePilot] Landing …")
             if self.offboard_on:
                 await self._stop_offboard()
             await self.drone.action.land()
         except ActionError as e:
-            print(f"[DroneController] Land error: {e}")
+            print(f"[SafePilot] Land error: {e}")
 
     async def cmd_rtl(self):
         try:
-            print("[DroneController] RTL …")
+            print("[SafePilot] RTL …")
             if self.offboard_on:
                 await self._stop_offboard()
             await self.drone.action.return_to_launch()
         except ActionError as e:
-            print(f"[DroneController] RTL error: {e}")
+            print(f"[SafePilot] RTL error: {e}")
 
     async def cmd_hold(self):
         """Command zero velocity and stay in offboard (hover in place), ignoring stick inputs."""
-        print("[DroneController] HOLD — zeroing velocity & locking sticks.")
+        print("[SafePilot] HOLD — zeroing velocity & locking sticks.")
         self.is_holding = True
         self.set_velocity(0.0, 0.0, 0.0, 0.0)
         if not self.offboard_on:
@@ -320,43 +321,43 @@ class DroneController:
         """
         try:
             if not AUTO_WAYPOINTS:
-                print("[DroneController] ⚠ AUTO_WAYPOINTS is empty! Add waypoints to teleop_node.py")
+                print("[SafePilot] ⚠ AUTO_WAYPOINTS is empty! Add waypoints to teleop_node.py")
                 return
 
             # ── 1. Takeoff if not already in air ───────────────────────────────────
             if not self.in_air:
                 if not self.connected:
-                    print("[DroneController] ⚠ Not connected — cannot start mission.")
+                    print("[SafePilot] ⚠ Not connected — cannot start mission.")
                     return
 
-                print("[DroneController] Drone is on the ground — arming and taking off before mission ...")
+                print("[SafePilot] Drone is on the ground — arming and taking off before mission ...")
 
                 # Stop offboard if it was active
                 if self.offboard_on:
                     await self._stop_offboard()
 
-                print("[DroneController] Arming …")
+                print("[SafePilot] Arming …")
                 await self.drone.action.arm()
 
-                print(f"[DroneController] Taking off to {AUTO_ALTITUDE} m …")
+                print(f"[SafePilot] Taking off to {AUTO_ALTITUDE} m …")
                 await self.drone.action.set_takeoff_altitude(AUTO_ALTITUDE)
                 await self.drone.action.takeoff()
 
                 # Wait until 95% of mission altitude is reached
                 async for pos in self.drone.telemetry.position():
-                    print(f"[DroneController] Altitude: {pos.relative_altitude_m:.1f} m  (target {AUTO_ALTITUDE} m)")
+                    print(f"[SafePilot] Altitude: {pos.relative_altitude_m:.1f} m  (target {AUTO_ALTITUDE} m)")
                     if pos.relative_altitude_m >= AUTO_ALTITUDE * 0.95:
-                        print("[DroneController] ✅ Reached mission altitude.")
+                        print("[SafePilot] ✅ Reached mission altitude.")
                         break
             else:
-                print("[DroneController] Drone already in air — starting mission directly.")
+                print("[SafePilot] Drone already in air — starting mission directly.")
 
                 # Exit offboard so we can switch to mission mode
                 if self.offboard_on:
                     await self._stop_offboard()
 
             # ── 2. Upload mission plan ───────────────────────────────────────
-            print(f"[DroneController] Uploading mission ({len(AUTO_WAYPOINTS)} waypoints) …")
+            print(f"[SafePilot] Uploading mission ({len(AUTO_WAYPOINTS)} waypoints) …")
             mission_items = []
             for lat, lon in AUTO_WAYPOINTS:
                 mission_items.append(MissionItem(
@@ -382,12 +383,12 @@ class DroneController:
             self.mission_uploaded = True
 
             # ── 3. Start mission ──────────────────────────────────────────
-            print("[DroneController] 🚀 Starting mission …")
+            print("[SafePilot] 🚀 Starting mission …")
             await self.drone.mission.start_mission()
             self.mission_active = True
             self.mission_paused = False
         except Exception as e:
-            print(f"[DroneController] Start mission error: {e}")
+            print(f"[SafePilot] Start mission error: {e}")
 
     async def cmd_resume_mission(self):
         """
@@ -402,12 +403,12 @@ class DroneController:
         """
         try:
             if not self.mission_uploaded:
-                print("[DroneController] No mission uploaded yet — performing fresh start instead.")
+                print("[SafePilot] No mission uploaded yet — performing fresh start instead.")
                 await self.cmd_start_mission()
                 return
 
             resume_idx = self._paused_mission_item
-            print(f"[DroneController] Resuming mission from waypoint {resume_idx} …")
+            print(f"[SafePilot] Resuming mission from waypoint {resume_idx} …")
 
             if self.offboard_on:
                 await self._stop_offboard()
@@ -419,14 +420,14 @@ class DroneController:
             self.mission_active = True
             self.mission_paused = False
         except Exception as e:
-            print(f"[DroneController] Resume mission error: {e}")
+            print(f"[SafePilot] Resume mission error: {e}")
 
     async def cmd_pause_mission(self):
         try:
             # Snapshot the current waypoint index BEFORE pausing so resume
             # can return to this exact point on every pause/resume cycle.
             self._paused_mission_item = self._current_mission_item
-            print(f"[DroneController] Pausing mission at waypoint {self._paused_mission_item} …")
+            print(f"[SafePilot] Pausing mission at waypoint {self._paused_mission_item} …")
 
             await self.drone.mission.pause_mission()
             self.mission_active = False
@@ -435,7 +436,7 @@ class DroneController:
             # Enter offboard so the pilot can re-position manually
             await self._start_offboard()
         except Exception as e:
-            print(f"[DroneController] Pause mission error: {e}")
+            print(f"[SafePilot] Pause mission error: {e}")
 
     async def cmd_enable_offboard(self):
         self.is_holding = False
@@ -450,17 +451,17 @@ class DroneController:
 
     async def cmd_kill(self):
         """Emergency kill — disarms immediately regardless of state."""
-        print("[DroneController] ⚠⚠⚠  EMERGENCY KILL — DISARMING! ⚠⚠⚠")
+        print("[SafePilot] ⚠⚠⚠  EMERGENCY KILL — DISARMING! ⚠⚠⚠")
         try:
             if self.offboard_on:
                 await self._stop_offboard()
             await self.drone.action.kill()
         except ActionError as e:
-            print(f"[DroneController] Kill error: {e}")
+            print(f"[SafePilot] Kill error: {e}")
 
     async def cmd_enable_geofence(self):
         """Upload embedded polygon geofence and enable FC fence protection."""
-        print("[DroneController] Uploading and enabling Geofence ...")
+        print("[SafePilot] Uploading and enabling Geofence ...")
         try:
             await self.drone.geofence.clear_geofence()
             # FENCE_TYPE: 1=Alt, 2=Circle, 4=Polygon, 7=All Enabled
@@ -474,21 +475,21 @@ class DroneController:
                 polygon = Polygon(points, FenceType.INCLUSION)
                 geofence_data = GeofenceData([polygon], [])
                 await self.drone.geofence.upload_geofence(geofence_data)
-                print(f"[DroneController] ✅ Geofence uploaded ({len(points)} points) & ENABLED (Max Alt: {FENCE_ALT_MAX}m)")
+                print(f"[SafePilot] ✅ Geofence uploaded ({len(points)} points) & ENABLED (Max Alt: {FENCE_ALT_MAX}m)")
             else:
-                print(f"[DroneController] ✅ Geofence parameters ENABLED (Max Alt: {FENCE_ALT_MAX}m)")
+                print(f"[SafePilot] ✅ Geofence parameters ENABLED (Max Alt: {FENCE_ALT_MAX}m)")
         except Exception as e:
-            print(f"[DroneController] Enable Geofence error: {e}")
+            print(f"[SafePilot] Enable Geofence error: {e}")
 
     async def cmd_disable_geofence(self):
         """Disable Geofence and clear fence data."""
-        print("[DroneController] Disabling Geofence ...")
+        print("[SafePilot] Disabling Geofence ...")
         try:
             await self.drone.param.set_param_int("FENCE_ENABLE", 0)
             await self.drone.geofence.clear_geofence()
-            print("[DroneController] 🚫 Geofence DISABLED & cleared")
+            print("[SafePilot] 🚫 Geofence DISABLED & cleared")
         except Exception as e:
-            print(f"[DroneController] Disable Geofence error: {e}")
+            print(f"[SafePilot] Disable Geofence error: {e}")
 
     async def _start_offboard(self):
         """Zero velocity, then enable offboard mode."""
@@ -500,17 +501,17 @@ class DroneController:
             )
             await self.drone.offboard.start()
             self.offboard_on = True
-            print("[DroneController] ✅ Offboard mode ON — joystick in control.")
+            print("[SafePilot] ✅ Offboard mode ON — joystick in control.")
         except OffboardError as e:
-            print(f"[DroneController] Offboard start error: {e}")
+            print(f"[SafePilot] Offboard start error: {e}")
 
     async def _stop_offboard(self):
         try:
             await self.drone.offboard.stop()
             self.offboard_on = False
-            print("[DroneController] Offboard mode OFF.")
+            print("[SafePilot] Offboard mode OFF.")
         except OffboardError as e:
-            print(f"[DroneController] Offboard stop error: {e}")
+            print(f"[SafePilot] Offboard stop error: {e}")
 
     def get_telemetry_str(self):
         """Return formatted string of cached telemetry."""
@@ -534,7 +535,7 @@ class DroneJoyTeleop(Node):
     """
 
     def __init__(self, drone_ctrl: DroneController):
-        super().__init__('drone_joy_teleop')
+        super().__init__('safe_pilot_teleop')
         self.dc = drone_ctrl
 
         # ── Subscriptions ──────────────────────────────────────────────────────
@@ -579,7 +580,7 @@ class DroneJoyTeleop(Node):
         # ── Debounce: previous button states ──────────────────────────────────
         self._prev = {}
 
-        self.get_logger().info("🚁 Drone Joy Teleop node started.")
+        self.get_logger().info("🚁 SafePilot Teleop node started — safe flying for everyone.")
         self._print_speed()
 
     # ── Helper: safe button read ───────────────────────────────────────────────

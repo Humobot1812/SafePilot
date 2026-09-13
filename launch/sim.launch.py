@@ -2,7 +2,7 @@
 """
 Alias launch file for simulation.launch.py
 Usage:
-  ros2 launch drone_controller sim.launch.py
+  ros2 launch safe_pilot sim.launch.py
 """
 
 import os

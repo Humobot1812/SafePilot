@@ -12,7 +12,7 @@ Automates the full simulation workflow in one command:
    (in ~/Documents/Documents/Drone/apm/ardupilot/ArduCopter)
 
 3. Starts the ROS 2 Drone Teleop system after a configurable delay (default 15s):
-   `ros2 launch drone_controller teleop.launch.py`
+   `ros2 launch safe_pilot teleop.launch.py`
 """
 
 import os
@@ -127,7 +127,7 @@ def generate_launch_description():
 
     # ── 3. ROS 2 Teleop System Launch ─────────────────────────────────────────
     # Equivalent to:
-    # ros2 launch drone_controller teleop.launch.py
+    # ros2 launch safe_pilot teleop.launch.py
     current_launch_dir = os.path.dirname(os.path.abspath(__file__))
     teleop_launch_path = os.path.join(current_launch_dir, 'teleop.launch.py')
 
