@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 from glob import glob
 import os
 
-package_name = 'drone_controller'
+package_name = 'safe_pilot'
 
 setup(
     name=package_name,
@@ -28,7 +28,7 @@ setup(
     zip_safe=True,
     maintainer='abhinav',
     maintainer_email='ironman18122004@gmail.com',
-    description='Semi-Autonomous Drone Controller with Joystick Teleoperation',
+    description='SafePilot — Making drone piloting safe and accessible for everyone',
     license='Apache-2.0',
     extras_require={
         'test': [
@@ -37,7 +37,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'teleop_node = drone_controller.teleop_node:main',
+            'teleop_node = safe_pilot.teleop_node:main',
         ],
     },
 )

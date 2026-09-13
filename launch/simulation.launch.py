@@ -133,7 +133,7 @@ def generate_launch_description():
 
     if not os.path.exists(teleop_launch_path):
         try:
-            pkg_share = get_package_share_directory('drone_controller')
+            pkg_share = get_package_share_directory('safe_pilot')
             teleop_launch_path = os.path.join(pkg_share, 'launch', 'teleop.launch.py')
         except (PackageNotFoundError, Exception):
             pass

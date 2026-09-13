@@ -14,7 +14,7 @@ def generate_launch_description():
         ),
 
         Node(
-            package='drone_controller',
+            package='safe_pilot',
             executable='teleop_node',
             name='drone_teleop',
             output='screen'

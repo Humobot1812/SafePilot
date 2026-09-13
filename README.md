@@ -3,7 +3,7 @@
 ### *Making drone piloting safe, simple, and accessible for everyone.*
 
 > **Platform**: 🖥️ Ground Station / Companion Computer · Linux · ROS 2 Humble
-> **Package name**: `drone_controller`
+> **Package name**: `safe_pilot`
 
 ---
 
@@ -87,8 +87,8 @@ The package uses two concurrent threads:
 ## 📁 Package Structure
 
 ```text
-drone_controller/
-├── drone_controller/
+SafePilot/                          # repo root / ROS 2 workspace package
+├── safe_pilot/
 │   ├── __init__.py
 │   └── teleop_node.py          # Core ROS 2 node + MAVSDK async bridge
 ├── launch/
@@ -96,7 +96,7 @@ drone_controller/
 │   ├── sim.launch.py           # Quick alias for simulation.launch.py
 │   └── teleop.launch.py        # Launches joy_node + teleop_node only
 ├── resource/
-│   └── drone_controller
+│   └── safe_pilot
 ├── test/
 │   ├── test_copyright.py
 │   ├── test_flake8.py
@@ -167,7 +167,7 @@ From the workspace root (`~/Semi_control`):
 
 ```bash
 cd ~/Semi_control
-colcon build --packages-select drone_controller
+colcon build --packages-select safe_pilot
 source install/setup.bash
 ```
 
@@ -181,9 +181,9 @@ Starts **Gazebo Harmonic**, then **ArduCopter SITL** after a configurable delay,
 
 ```bash
 source ~/Semi_control/install/setup.bash
-ros2 launch drone_controller simulation.launch.py
+ros2 launch safe_pilot simulation.launch.py
 # Quick alias:
-ros2 launch drone_controller sim.launch.py
+ros2 launch safe_pilot sim.launch.py
 ```
 
 **Tunable parameters:**
@@ -198,7 +198,7 @@ ros2 launch drone_controller sim.launch.py
 
 ```bash
 # Example with custom delays and world file
-ros2 launch drone_controller sim.launch.py \
+ros2 launch safe_pilot sim.launch.py \
   ardupilot_delay:=5.0 teleop_delay:=20.0 world:=iris_runway.sdf
 ```
 
@@ -208,7 +208,7 @@ Launches `joy_node` and `teleop_node` together:
 
 ```bash
 source ~/Semi_control/install/setup.bash
-ros2 launch drone_controller teleop.launch.py
+ros2 launch safe_pilot teleop.launch.py
 ```
 
 #### Option C — Manual / Separate Terminals
@@ -222,10 +222,10 @@ ros2 run joy joy_node
 **Terminal 2 — Drone teleop node:**
 ```bash
 source ~/Semi_control/install/setup.bash
-ros2 run drone_controller teleop_node
+ros2 run safe_pilot teleop_node
 ```
 
-> **Note:** Ensure your flight controller is broadcasting MAVLink on `udpin://0.0.0.0:14550`. Update `DRONE_ADDRESS` in [`teleop_node.py`](drone_controller/teleop_node.py) if your endpoint differs.
+> **Note:** Ensure your flight controller is broadcasting MAVLink on `udpin://0.0.0.0:14550`. Update `DRONE_ADDRESS` in [`teleop_node.py`](safe_pilot/teleop_node.py) if your endpoint differs.
 
 ---
 
@@ -301,7 +301,7 @@ Default speeds at startup: **XY = 2.0 m/s · Z = 1.0 m/s · Yaw = 30.0 deg/s**
 
 ### Embedded Polygon Geofence
 
-Configure at the top of [`teleop_node.py`](drone_controller/teleop_node.py):
+Configure at the top of [`teleop_node.py`](safe_pilot/teleop_node.py):
 
 | Constant | Default | Description |
 |---|---|---|
@@ -332,7 +332,7 @@ When **BTN 13** is pressed, the node:
 
 ### Autonomous Waypoint Mission
 
-Add GPS coordinates to `AUTO_WAYPOINTS` in [`teleop_node.py`](drone_controller/teleop_node.py):
+Add GPS coordinates to `AUTO_WAYPOINTS` in [`teleop_node.py`](safe_pilot/teleop_node.py):
 
 > **Note:** The waypoints, altitude, and speed below are **demonstration values only**. Replace them with the GPS coordinates, altitude, and speed suitable for your actual mission environment.
 
@@ -367,7 +367,7 @@ Inspect raw indices from your controller:
 ros2 topic echo /joy
 ```
 
-Then update the mappings inside `DroneJoyTeleop.__init__` in [`teleop_node.py`](drone_controller/teleop_node.py):
+Then update the mappings inside `DroneJoyTeleop.__init__` in [`teleop_node.py`](safe_pilot/teleop_node.py):
 
 ```python
 # ── Axis mapping ───────────────────────────────────────────────────────
@@ -397,7 +397,7 @@ self.BTN_GEOFENCE_OFF  = 14
 
 ## ⚙️ Configuration Reference
 
-All top-level constants in [`teleop_node.py`](drone_controller/teleop_node.py):
+All top-level constants in [`teleop_node.py`](safe_pilot/teleop_node.py):
 
 | Constant | Default | Description |
 |---|---|---|
