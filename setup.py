@@ -24,7 +24,11 @@ setup(
             glob('launch/*.launch.py')
         ),
     ],
+    package_data={
+        'safe_pilot': ['*.task'],   # include hand_landmarker.task in the installed package
+    },
     install_requires=['setuptools'],
+
     zip_safe=True,
     maintainer='abhinav',
     maintainer_email='ironman18122004@gmail.com',
@@ -37,7 +41,8 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'teleop_node = safe_pilot.teleop_node:main',
+            'teleop_node         = safe_pilot.teleop_node:main',
+            'teleop_gesture_node = safe_pilot.teleop_gesture_node:main',
         ],
     },
 )

@@ -23,6 +23,7 @@ Learning to fly a drone is hard — one wrong stick input and your drone is on t
 
 **Core features:**
 - 🕹️ **3D velocity teleoperation** — full body-frame control from analog sticks
+- ✋ **Multi-core AI hand gesture control** — contact-free flight with translational strafe, responsive forward/reverse linear depth scaling, and closed-fist in-place yaw rotation
 - 🛡️ **Embedded geofencing** — polygon boundary + altitude ceiling with auto-RTL on breach
 - 🗺️ **Autonomous waypoint missions** — upload, start, pause, and resume with a single button
 - 📡 **Live telemetry** — position, armed state, and flight mode streamed over ROS 2
@@ -36,51 +37,63 @@ Learning to fly a drone is hard — one wrong stick input and your drone is on t
 2. [Package Structure](#-package-structure)
 3. [Prerequisites & Installation](#️-prerequisites--installation)
 4. [Build & Launch Instructions](#-build--launch-instructions)
-5. [Controller Layout & Keybindings](#-controller-layout--keybindings)
-6. [ROS 2 Topics & MAVLink Endpoints](#-ros-2-topics--mavlink-endpoints)
-7. [Geofencing & Autonomous Mission Setup](#️-geofencing--autonomous-mission-setup)
-8. [Controller Calibration & Customization](#-controller-calibration--customization)
-9. [Configuration Reference](#️-configuration-reference)
+5. [AI Hand Gesture Teleoperation (Multi-Core)](#-ai-hand-gesture-teleoperation-multi-core)
+6. [Controller Layout & Keybindings](#-controller-layout--keybindings)
+7. [ROS 2 Topics & MAVLink Endpoints](#-ros-2-topics--mavlink-endpoints)
+8. [Geofencing & Autonomous Mission Setup](#️-geofencing--autonomous-mission-setup)
+9. [Controller Calibration & Customization](#-controller-calibration--customization)
+10. [Configuration Reference](#️-configuration-reference)
 
 ---
 
 ## 🏗️ Architecture Overview
 
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│                          Ground Station (Linux)                        │
-│                                                                        │
-│   ┌─────────────┐    /joy     ┌────────────────────────────────────┐  │
-│   │  joy_node   │ ──────────► │     DroneJoyTeleop (ROS 2 Node)    │  │
-│   │ (HID driver)│             │                                    │  │
-│   └─────────────┘             │  • Axes   → velocity set-points    │  │
-│                               │  • Buttons → discrete commands     │  │
-│   ┌─────────────┐  /drone_    │  • D-pad  → live speed scaling     │  │
-│   │  Subscriber │ ◄─ status ─ │                                    │  │
-│   └─────────────┘             └──────────────┬─────────────────────┘  │
-│                                              │ asyncio.run_coroutine   │
-│                               ┌──────────────▼─────────────────────┐  │
-│                               │      DroneController (MAVSDK)      │  │
-│                               │                                    │  │
-│                               │  • cmd_arm_takeoff / land / rtl    │  │
-│                               │  • Offboard velocity loop (20 Hz)  │  │
-│                               │  • Mission upload & pause/resume   │  │
-│                               │  • Geofence upload & monitoring    │  │
-│                               │  • Telemetry streams (pos/armed)   │  │
-│                               └──────────────┬─────────────────────┘  │
-└──────────────────────────────────────────────┼────────────────────────┘
-                                               │ MAVLink UDP :14550
-                              ┌────────────────▼──────────────────────┐
-                              │   Flight Controller (ArduPilot/PX4)   │
-                              │   • SITL via Gazebo Harmonic           │
-                              │   • Physical drone                     │
-                              └───────────────────────────────────────┘
+```text
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                                 Ground Station (Linux)                                 │
+│                                                                                        │
+│   ┌─────────────┐       /joy      ┌────────────────────────────────────────────────┐   │
+│   │  joy_node   │ ──────────────► │          DroneJoyTeleop (ROS 2 Node)           │   │
+│   │ (HID driver)│                 │                                                │   │
+│   └─────────────┘                 │  • Sticks  → 3D velocity set-points            │   │
+│                                   │  • Buttons → discrete flight commands          │   │
+│   ┌─────────────┐   /drone_status │  • D-pad   → live speed scaling                │   │
+│   │  Subscriber │ ◄────────────── │  • SELECT+B → toggle Hand Gesture Mode         │   │
+│   └─────────────┘                 │  • 50 Hz Timer → thread-safe gesture drainage  │   │
+│                                   └───────────────┬────────────────────────────────┘   │
+│                                                   │ asyncio.run_coroutine              │
+│                                   ┌───────────────▼────────────────┐                   │
+│                                   │    DroneController (MAVSDK)    │                   │
+│                                   │  • cmd_arm_takeoff / land / rtl│                   │
+│                                   │  • Offboard loop (20 Hz)       │                   │
+│                                   │  • Mission & Geofence handlers │                   │
+│                                   └───────────────┬────────────────┘                   │
+│                                                   │                                    │
+│   ┌───────────────────────────────────────────────┴────────────────────────────────┐   │
+│   │ Process 2: GestureVisionProcess (Dedicated Multi-Core Worker)                  │   │
+│   │                                                                                │   │
+│   │   • CPU Affinity Pinning: Dedicated CPU cores (e.g. Cores 20–23)               │   │
+│   │   • Camera: Low-latency VideoCapture (CAP_PROP_BUFFERSIZE=1)                   │   │
+│   │   • MediaPipe: Hand Landmarker via TFLite XNNPACK CPU Delegate                │   │
+│   │   • Dual Modes: Open Hand (Strafe/Climb/Depth) vs Closed Fist (Yaw)            │   │
+│   │   • Anti-Overlap HUD: Real-time 2-row telemetry + visual depth rings           │   │
+│   │   • IPC: Non-blocking multiprocessing.Queue & stop Event                       │   │
+│   └────────────────────────────────────────────────────────────────────────────────┘   │
+└───────────────────────────────────────────────────┬────────────────────────────────────┘
+                                                    │ MAVLink UDP :14550
+                                   ┌────────────────▼────────────────┐
+                                   │ Flight Controller (ArduPilot/PX4│
+                                   │ • SITL via Gazebo Harmonic      │
+                                   │ • Physical drone                │
+                                   └─────────────────────────────────┘
 ```
 
-The package uses two concurrent threads:
+The package achieves high performance and rock-solid safety through strict process isolation:
 
-- **ROS 2 spin thread** — Receives `/joy` messages and schedules async coroutines via `asyncio.run_coroutine_threadsafe`.
-- **MAVSDK asyncio thread** — Runs the offboard velocity loop at 20 Hz, streams telemetry, and executes all flight commands.
+- **ROS 2 spin thread** — Receives `/joy` inputs and safely runs executor callbacks.
+- **50 Hz ROS 2 Timer (`_gesture_poll_callback`)** — Safely pulls velocity setpoints and status events from the vision process directly within the ROS 2 thread, eliminating DDS thread crashes.
+- **MAVSDK asyncio thread** — Runs the offboard velocity loop at 20 Hz, streams drone telemetry, and executes all MAVLink commands.
+- **Dedicated Vision Process (`GestureVisionProcess`)** — Pinned to dedicated CPU performance cores via `os.sched_setaffinity` to isolate AI vision inference from real-time flight communications.
 
 ---
 
@@ -90,11 +103,13 @@ The package uses two concurrent threads:
 SafePilot/                          # repo root / ROS 2 workspace package
 ├── safe_pilot/
 │   ├── __init__.py
-│   └── teleop_node.py          # Core ROS 2 node + MAVSDK async bridge
+│   ├── teleop_node.py              # Classic ROS 2 gamepad teleop + MAVSDK bridge
+│   ├── teleop_gesture_node.py      # Multi-Core gesture teleop + gamepad integration
+│   └── hand_landmarker.task        # Bundled MediaPipe hand landmarker model
 ├── launch/
-│   ├── simulation.launch.py    # Full pipeline: Gazebo → ArduCopter SITL → Teleop
-│   ├── sim.launch.py           # Quick alias for simulation.launch.py
-│   └── teleop.launch.py        # Launches joy_node + teleop_node only
+│   ├── simulation.launch.py        # Full pipeline: Gazebo → ArduCopter SITL → Teleop
+│   ├── sim.launch.py               # Quick alias for simulation.launch.py
+│   └── teleop.launch.py            # Launches joy_node + teleop_node
 ├── resource/
 │   └── safe_pilot
 ├── test/
@@ -118,6 +133,8 @@ SafePilot/                          # repo root / ROS 2 workspace package
 | ROS 2 | Humble Hawksbill | Required |
 | Python | 3.10+ | Ships with Ubuntu 22.04 |
 | MAVSDK-Python | Latest | `pip install mavsdk` |
+| MediaPipe | 0.10+ | Required for gesture control (`pip install mediapipe`) |
+| OpenCV Python | 4.x+ | Required for gesture vision (`pip install opencv-python`) |
 | ArduPilot SITL | Latest | Simulation only |
 | Gazebo Harmonic | 8.x | Simulation only |
 
@@ -128,10 +145,10 @@ sudo apt update
 sudo apt install -y ros-humble-joy
 ```
 
-### 2. Install MAVSDK-Python
+### 2. Install Python Dependencies
 
 ```bash
-pip install mavsdk
+pip install mavsdk mediapipe opencv-python
 ```
 
 ### 3. Verify Joystick Connection
@@ -225,7 +242,102 @@ source ~/Semi_control/install/setup.bash
 ros2 run safe_pilot teleop_node
 ```
 
-> **Note:** Ensure your flight controller is broadcasting MAVLink on `udpin://0.0.0.0:14550`. Update `DRONE_ADDRESS` in [`teleop_node.py`](safe_pilot/teleop_node.py) if your endpoint differs.
+#### Option D — Hand Gesture Teleoperation Mode *(Multi-Core AI)*
+
+Enables contact-free vision control alongside gamepad controls. Runs on dedicated performance CPU cores:
+
+**Terminal 1 — Joystick driver:**
+```bash
+source ~/Semi_control/install/setup.bash
+ros2 run joy joy_node
+```
+
+**Terminal 2 — Gesture-enabled teleop node:**
+```bash
+source ~/Semi_control/install/setup.bash
+ros2 run safe_pilot teleop_gesture_node
+```
+
+> **Quick Toggle:** Press **SELECT (10) + B (1)** simultaneously on your controller at any time to enter or exit Hand Gesture Control mode.
+
+> **Note:** Ensure your flight controller is broadcasting MAVLink on `udpin://0.0.0.0:14550`. Update `DRONE_ADDRESS` in [`teleop_node.py`](safe_pilot/teleop_node.py) or [`teleop_gesture_node.py`](safe_pilot/teleop_gesture_node.py) if your endpoint differs.
+
+---
+
+## ✋ AI Hand Gesture Teleoperation (Multi-Core)
+
+The `teleop_gesture_node` provides contact-free piloting using your webcam and Google MediaPipe hand landmark tracking. It is engineered with a **multi-core isolated process architecture** that pins vision processing to dedicated CPU cores, completely isolating AI inference from MAVLink and ROS 2 communication loops.
+
+### 🕹️ Entering & Exiting Gesture Mode
+- **From Gamepad**: Press **SELECT (button 10) + B (button 1)** simultaneously.
+- **From OpenCV GUI**: Press `'q'` inside the window or click the window manager close button (`X`).
+- **Safety Restoration**: On exit, joystick control is instantly restored and the drone is placed in an automated stationary hover (`HOLD`).
+
+---
+
+### ⏱️ Initial Calibration
+1. When activated, the OpenCV HUD enters `[ CALIBRATING... ]` mode.
+2. Present your open hand flat inside the **green guide circle**.
+3. Hold steady for ~3 seconds (60 frames). An animated radial yellow progress arc tracks calibration progress.
+4. Once locked, the hand's neutral center ($cx_0, cy_0$) and baseline size ($s_0 = \sqrt{\text{area}_0}$) are saved, and the system transitions to `[ MODE: STRAFE ]`.
+
+---
+
+### ✈️ Dual Flight Modes
+
+SafePilot supports two distinct, intuitive gesture modes based on hand shape:
+
+#### 1. 🖐️ Open Hand Mode: 3D Translational Flight (Strafe / Climb / Forward / Reverse)
+When fingers are spread open flat:
+
+| Hand Motion | Physical Drone Response | MAVSDK Output | Speed Range | Visual Feedback |
+|---|---|---|---|---|
+| **Move Hand Left / Right** | Lateral Strafe Left / Right | `vy` ($\pm dx \times 5.0$) | $\pm 0.2\text{ to }3.0\text{ m/s}$ | Green velocity vector arrow |
+| **Move Hand Up / Down** | Ascend / Descend | `-vz` (Up) / `+vz` (Down) | $\pm 0.2\text{ to }3.0\text{ m/s}$ | Green velocity vector arrow |
+| **Push Hand Closer to Camera** | Fly Forward | `+vx` | $+0.6\text{ to }+3.0\text{ m/s}$ | Expanding **turquoise ring** + `(FWD)` HUD tag |
+| **Pull Hand Away from Camera** | Fly Reverse / Backward | `-vx` | $-0.6\text{ to }-3.0\text{ m/s}$ | Contracting **orange ring** + `(REV)` HUD tag |
+| **Yaw Axis** | Rotation Locked | `yaw = 0.0 deg/s` | `0.0` | Prevents unwanted rotation |
+
+> **Linear Depth Scaling**: Forward and reverse speeds use normalized linear hand scale:
+> $$\text{delta\_scale} = \frac{\sqrt{\text{area}} - \sqrt{\text{ref\_area}}}{\sqrt{\text{ref\_area}}}$$
+> With `GESTURE_SENSITIVITY_FWD = 6.5 m/s`, subtle hand movements produce smooth, symmetric speeds from $0.6\text{ m/s}$ up to the $3.0\text{ m/s}$ hard safety limit, regardless of distance from the camera.
+
+---
+
+#### 2. ✊ Closed Fist Mode: In-Place Yaw Rotation (Pure Heading Control)
+When fingers are curled into a closed fist (detected via 3D finger curl heuristics with 3-frame debounce):
+
+| Hand Motion | Physical Drone Response | MAVSDK Output | Speed Range | Visual Feedback |
+|---|---|---|---|---|
+| **Move Fist Right** | Rotate Clockwise | `+yaw` | $+5.0\text{ to }+45.0^\circ\text{/s}$ | `>> YAW RIGHT >>` cyan rotation arc |
+| **Move Fist Left** | Rotate Counter-Clockwise | `-yaw` | $-5.0\text{ to }-45.0^\circ\text{/s}$ | `<< YAW LEFT <<` cyan rotation arc |
+| **Fist Centered** | Neutral (Heading Locked) | `yaw = 0.0` | `0.0` | `YAW NEUTRAL` indicator |
+| **Strafe & Forward Axes** | Translation Locked | `vx = 0.0, vy = 0.0` | `0.0` | Eliminates unwanted drift |
+| **Move Fist Up / Down** | Ascend / Descend | `vz` | $\pm 0.2\text{ to }3.0\text{ m/s}$ | Vertical velocity arrow |
+
+---
+
+### 🖥️ Anti-Overlap 2-Row HUD Layout
+
+The OpenCV camera interface features a non-overlapping two-row translucent header and a dedicated footer bar designed for maximum clarity in 640×480 and HD displays:
+
+- **Row 1 ($y = 26$)**: Left displays the active mode badge (`[ MODE: STRAFE ]` in green or `[ MODE: YAW ROTATION ]` in cyan). Right displays the hand state (`OPEN HAND` or `CLOSED FIST`), dynamically right-aligned with exact pixel margins.
+- **Row 2 ($y = 54$)**: Live telemetry values:
+  - Open Hand: `VX: +1.3 (FWD)   VY: -0.4   VZ: +0.0 m/s`
+  - Closed Fist: `YAW: +25.5 deg/s   VZ: +0.0 m/s   (STRAFE LOCKED)`
+- **Center Visual Feedback**:
+  - Green guide circle ($r_g = \min(w,h) / 5$).
+  - Dynamic depth ring (expanding turquoise for forward, contracting orange for reverse).
+  - Rotation arcs for yaw rate.
+- **Footer Bar (32px tall)**: Displays package label and hotkey instructions (`SELECT+B or 'Q' to exit`).
+
+---
+
+### 🛡️ Vision Safety & Fault Tolerance
+- **1.5-Second Hand Loss Timeout**: If the hand leaves the frame or tracking is lost for $>1.5\text{ s}$, the system commands `DRONE HOLD` and hovers safely in place.
+- **DDS Thread Safety**: Queue commands are ingested strictly through a 50 Hz ROS 2 timer (`_gesture_poll_callback`) on the executor thread, preventing ROS 2 DDS C-library segmentation faults.
+- **Zero Memory Leaks**: Clean process termination bypasses slow TensorFlow Lite C++ destructor deadlocks via fast process exit and releases all resources with zero dangling shared memory segments in `/dev/shm`.
+- **Headless Fallback**: If display output is unavailable (e.g., SSH session without X11 forwarding), the vision loop automatically catches GUI notices and operates headlessly without crashing.
 
 ---
 
@@ -265,6 +377,7 @@ Default speeds at startup: **XY = 2.0 m/s · Z = 1.0 m/s · Yaw = 30.0 deg/s**
 | **A** | `0` | `LAND` | Initiates landing; disarms on touchdown |
 | **X** | `3` | `RTL` | Exits offboard, triggers Return-to-Launch |
 | **B** | `1` | `HOLD` | Zeroes velocity, locks sticks; drone hovers in place |
+| **SELECT + B** | `10 + 1` | `GESTURE MODE TOGGLE` | Toggles AI Hand Gesture Control on/off (starts/stops isolated vision process) |
 | **L1** | `6` | `OFFBOARD ON` | Enables offboard mode; joystick takes manual control |
 | **L2** | `8` | `OFFBOARD OFF` | Disables offboard; flight controller resumes station-keeping |
 | **R1** | `7` | `START / RESUME MISSION` | Fresh start: arms, takes off, uploads plan, runs mission. After pause: resumes from the exact paused waypoint |
@@ -397,7 +510,7 @@ self.BTN_GEOFENCE_OFF  = 14
 
 ## ⚙️ Configuration Reference
 
-All top-level constants in [`teleop_node.py`](safe_pilot/teleop_node.py):
+### Core Teleoperation Parameters ([`teleop_node.py`](safe_pilot/teleop_node.py))
 
 | Constant | Default | Description |
 |---|---|---|
@@ -409,9 +522,24 @@ All top-level constants in [`teleop_node.py`](safe_pilot/teleop_node.py):
 | `OFFBOARD_HZ` | `20 Hz` | Offboard velocity set-point frequency |
 | `DEADBAND` | `0.05` | Joystick axis dead-band threshold |
 | `FENCE_ALT_MAX` | `50.0 m` | Geofence altitude ceiling |
-| `FENCE_ACTION` | `1` (RTL) | Geofence breach action |
+| `FENCE_ACTION` | `1` (RTL) | Geofence breach action (`1` = RTL, `2` = Land) |
 | `AUTO_ALTITUDE` | `15.0 m` | Autonomous mission cruise altitude |
 | `AUTO_SPEED` | `5.0 m/s` | Autonomous mission flight speed |
+
+### Hand Gesture Vision Parameters ([`teleop_gesture_node.py`](safe_pilot/teleop_gesture_node.py))
+
+| Constant | Default | Description |
+|---|---|---|
+| `GESTURE_CAMERA_ID` | `0` | OpenCV video capture device index |
+| `CALIB_FRAMES` | `60` | Calibration frames needed to lock baseline (~2.5–3.0 s) |
+| `GESTURE_SENSITIVITY_XY` | `5.0` | Horizontal/vertical translational speed gain (m/s per unit) |
+| `GESTURE_SENSITIVITY_Z` | `3.0` | Vertical climb/descend speed gain (m/s per unit) |
+| `GESTURE_SENSITIVITY_FWD` | `6.5` | Forward/reverse linear depth speed gain (m/s per scale delta) |
+| `GESTURE_SENSITIVITY_YAW` | `75.0` | In-place yaw rotation rate gain (deg/s per unit, fist mode) |
+| `GESTURE_MAX_VEL` | `3.0 m/s` | Hard safety ceiling on gesture linear velocity |
+| `GESTURE_MAX_YAW_RATE` | `45.0 deg/s` | Hard safety ceiling on gesture yaw rotation rate |
+| `GESTURE_HOLD_TIMEOUT` | `1.5 s` | Time without hand detection before triggering automated `DRONE HOLD` |
+| `EMA_ALPHA` | `0.30` | Exponential moving average smoothing factor for landmark stability |
 
 ---
 
